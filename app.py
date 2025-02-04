@@ -41,6 +41,16 @@ def members():
     members = Member.query.all()
     return jsonify([{'id': m.id, 'name': m.name} for m in members])
 
+@app.route('/api/members/<int:member_id>', methods=['DELETE'])
+def delete_member(member_id):
+    member = Member.query.get_or_404(member_id)
+    # まず、このメンバーに関連する座席の割り当てを削除
+    SeatAssignment.query.filter_by(member_id=member_id).update({'member_id': None})
+    # メンバーを削除
+    db.session.delete(member)
+    db.session.commit()
+    return jsonify({'message': 'Member deleted successfully'})
+
 @app.route('/api/layouts', methods=['GET', 'POST'])
 def layouts():
     if request.method == 'POST':
@@ -63,13 +73,44 @@ def layouts():
     layouts = SeatLayout.query.all()
     return jsonify([{'id': l.id, 'name': l.name} for l in layouts])
 
-@app.route('/api/layouts/<int:layout_id>')
-def get_layout(layout_id):
-    assignments = SeatAssignment.query.filter_by(layout_id=layout_id).all()
-    return jsonify([{
-        'seat_number': a.seat_number,
-        'member_id': a.member_id
-    } for a in assignments])
+@app.route('/api/layouts/<int:layout_id>', methods=['GET', 'PUT', 'DELETE'])
+def manage_layout(layout_id):
+    layout = SeatLayout.query.get_or_404(layout_id)
+    
+    if request.method == 'DELETE':
+        # 関連する座席割り当てを削除
+        SeatAssignment.query.filter_by(layout_id=layout_id).delete()
+        # レイアウトを削除
+        db.session.delete(layout)
+        db.session.commit()
+        return jsonify({'message': 'Layout deleted successfully'})
+    
+    elif request.method == 'PUT':
+        # PUT メソッドの場合（編集）
+        data = request.json
+        layout.name = data['name']
+        
+        # 既存の座席割り当てを削除
+        SeatAssignment.query.filter_by(layout_id=layout_id).delete()
+        
+        # 新しい座席割り当てを作成
+        for seat_data in data['seats']:
+            assignment = SeatAssignment(
+                layout_id=layout_id,
+                seat_number=seat_data['seat_number'],
+                member_id=seat_data.get('member_id')
+            )
+            db.session.add(assignment)
+        
+        db.session.commit()
+        return jsonify({'message': 'Layout updated successfully'})
+    
+    else:
+        assignments = SeatAssignment.query.filter_by(layout_id=layout_id).all()
+        return jsonify([{
+            'seat_number': a.seat_number,
+            'member_id': a.member_id
+        } for a in assignments])
 
 def calculate_optimal_moves(current_layout, target_layout):
     moves = []

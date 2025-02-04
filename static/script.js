@@ -34,8 +34,29 @@ document.addEventListener('DOMContentLoaded', function() {
         
         const memberList = document.getElementById('memberList');
         memberList.innerHTML = members.map(member => `
-            <div class="list-group-item">${member.name}</div>
+            <div class="list-group-item d-flex justify-content-between align-items-center">
+                ${member.name}
+                <button class="btn btn-danger btn-sm delete-member" data-member-id="${member.id}">削除</button>
+            </div>
         `).join('');
+        
+        // 削除ボタンのイベントリスナーを追加
+        document.querySelectorAll('.delete-member').forEach(button => {
+            button.addEventListener('click', async (e) => {
+                if (confirm('このメンバーを削除してもよろしいですか？')) {
+                    const memberId = e.target.dataset.memberId;
+                    const response = await fetch(`/api/members/${memberId}`, {
+                        method: 'DELETE'
+                    });
+                    
+                    if (response.ok) {
+                        updateMemberList();
+                        updateMemberPool();
+                        initializeSeatingChart(); // 座席表も更新
+                    }
+                }
+            });
+        });
         
         updateMemberPool();
     }
@@ -211,20 +232,18 @@ document.addEventListener('DOMContentLoaded', function() {
         const layouts = await response.json();
         
         const layoutSelect = document.getElementById('layoutSelect');
+        layoutSelect.innerHTML = '<option value="">座席表を選択...</option>' +
+            layouts.map(layout => `
+                <option value="${layout.id}">${layout.name}</option>
+            `).join('');
+        
+        // 移動計画用のセレクトボックスも更新
         const fromLayout = document.getElementById('fromLayout');
         const toLayout = document.getElementById('toLayout');
-        
-        [layoutSelect, fromLayout, toLayout].forEach(select => {
-            const currentValue = select.value;
-            select.innerHTML = '<option value="">選択してください</option>';
-            layouts.forEach(layout => {
-                const option = new Option(layout.name, layout.id);
-                select.add(option);
-            });
-            if (currentValue) {
-                select.value = currentValue;
-            }
-        });
+        fromLayout.innerHTML = toLayout.innerHTML = '<option value="">選択してください</option>' +
+            layouts.map(layout => `
+                <option value="${layout.id}">${layout.name}</option>
+            `).join('');
     }
 
     // 座席表の読み込み
@@ -234,12 +253,10 @@ document.addEventListener('DOMContentLoaded', function() {
             const response = await fetch(`/api/layouts/${layoutId}`);
             const assignments = await response.json();
             
-            document.querySelectorAll('.seat').forEach(seat => {
-                seat.classList.add('empty');
-                seat.querySelector('.member-name').textContent = '';
-                seat.querySelector('.member-name').removeAttribute('data-member-id');
-            });
+            // 座席表をクリア
+            initializeSeatingChart();
             
+            // 座席を割り当て
             assignments.forEach(assignment => {
                 if (assignment.member_id) {
                     const member = members.find(m => m.id === assignment.member_id);
@@ -251,6 +268,79 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 }
             });
+            
+            // 編集モードを有効化
+            document.getElementById('layoutName').value = layoutSelect.options[layoutSelect.selectedIndex].text;
+            document.getElementById('saveLayout').style.display = 'none';
+            document.getElementById('updateLayout').style.display = 'inline-block';
+            document.getElementById('deleteLayout').style.display = 'inline-block';
+            currentLayout = layoutId;
+            
+            updateMemberPool();
+        } else {
+            initializeSeatingChart();
+            document.getElementById('layoutName').value = '';
+            document.getElementById('saveLayout').style.display = 'inline-block';
+            document.getElementById('updateLayout').style.display = 'none';
+            document.getElementById('deleteLayout').style.display = 'none';
+            currentLayout = null;
+        }
+    });
+
+    // 座席表の更新
+    document.getElementById('updateLayout').addEventListener('click', async function() {
+        if (!currentLayout) return;
+        
+        const name = document.getElementById('layoutName').value.trim();
+        if (!name) {
+            alert('座席表名を入力してください');
+            return;
+        }
+        
+        const seats = [];
+        document.querySelectorAll('.seat').forEach(seat => {
+            const seatNumber = parseInt(seat.dataset.seatNumber);
+            const memberName = seat.querySelector('.member-name');
+            const memberId = memberName.dataset.memberId ? parseInt(memberName.dataset.memberId) : null;
+            
+            seats.push({
+                seat_number: seatNumber,
+                member_id: memberId
+            });
+        });
+        
+        const response = await fetch(`/api/layouts/${currentLayout}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                name: name,
+                seats: seats
+            })
+        });
+        
+        if (response.ok) {
+            alert('座席表を更新しました');
+            updateLayoutList();
+        }
+    });
+
+    // 座席表の削除
+    document.getElementById('deleteLayout').addEventListener('click', async function() {
+        if (!currentLayout) return;
+        
+        if (confirm('この座席表を削除してもよろしいですか？')) {
+            const response = await fetch(`/api/layouts/${currentLayout}`, {
+                method: 'DELETE'
+            });
+            
+            if (response.ok) {
+                alert('座席表を削除しました');
+                document.getElementById('layoutSelect').value = '';
+                document.getElementById('layoutSelect').dispatchEvent(new Event('change'));
+                updateLayoutList();
+            }
         }
     });
 

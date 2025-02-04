@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
+import os
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///seats.db'
@@ -174,4 +175,6 @@ def calculate_moves():
     return jsonify(moves)
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5001)
+    # 開発環境ではポート5001、本番環境では環境変数PORTを使用
+    port = int(os.environ.get('PORT', 5001))
+    app.run(host='0.0.0.0', port=port)

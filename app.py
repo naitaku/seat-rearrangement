@@ -6,8 +6,6 @@ from dotenv import load_dotenv
 import msal
 from flask_session import Session
 import requests
-import logging
-from logging.handlers import RotatingFileHandler
 
 # Load environment variables
 load_dotenv(".env.example")
@@ -17,15 +15,6 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///seats.db'
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY')
 app.config['SESSION_TYPE'] = 'filesystem'
 Session(app)
-
-# Configure logging
-app.logger.setLevel(logging.DEBUG)
-# Enable logging to Azure's console output
-handler = logging.StreamHandler()
-handler.setLevel(logging.DEBUG)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-handler.setFormatter(formatter)
-app.logger.addHandler(handler)
 
 # MS Auth configs
 CLIENT_ID = os.getenv('CLIENT_ID')
@@ -37,15 +26,9 @@ SESSION_TYPE = "filesystem"
 
 # Get the application URL based on environment
 def get_redirect_uri():
-    redirect_uri = ""
     if 'WEBSITE_HOSTNAME' in os.environ:  # Running on Azure
-        redirect_uri = f"https://{os.environ['WEBSITE_HOSTNAME']}{REDIRECT_PATH}"
-    else:
-        redirect_uri = f"http://localhost:5001{REDIRECT_PATH}"
-    
-    app.logger.debug(f"Generated redirect_uri: {redirect_uri}")
-    app.logger.debug(f"Environment variables: WEBSITE_HOSTNAME={os.environ.get('WEBSITE_HOSTNAME')}")
-    return redirect_uri
+        return f"https://app-seat-rearrangement-0001.azurewebsites.net{REDIRECT_PATH}"
+    return f"http://localhost:5001{REDIRECT_PATH}"
 
 db = SQLAlchemy(app)
 
@@ -68,53 +51,35 @@ with app.app_context():
     db.create_all()
 
 def _build_msal_app(cache=None):
-    app.logger.debug(f"Building MSAL app with CLIENT_ID={CLIENT_ID}, AUTHORITY={AUTHORITY}")
     return msal.ConfidentialClientApplication(
         CLIENT_ID, authority=AUTHORITY,
         client_credential=CLIENT_SECRET, token_cache=cache)
 
 def _build_auth_url(authority=None, scopes=None, state=None):
-    redirect_uri = get_redirect_uri()
-    app.logger.debug(f"Building auth URL with redirect_uri={redirect_uri}, scopes={scopes}")
-    return _build_msal_app(authority=authority).get_authorization_request_url(
-        scopes or [], state=state or str(datetime.utcnow()), redirect_uri=redirect_uri)
+    return _build_msal_app().get_authorization_request_url(
+        scopes or SCOPE,
+        state=state or str(datetime.utcnow()),
+        redirect_uri=get_redirect_uri())
 
 @app.route("/login")
 def login():
-    app.logger.debug("Login route accessed")
-    session["state"] = str(datetime.utcnow())
-    auth_url = _build_auth_url(scopes=SCOPE, state=session["state"])
-    app.logger.debug(f"Generated auth_url: {auth_url}")
-    return redirect(auth_url)
+    session["flow"] = _build_auth_url()
+    return redirect(session["flow"])
 
 @app.route(REDIRECT_PATH)
 def authorized():
-    app.logger.debug(f"Authorized route accessed with query params: {request.args}")
-    if request.args.get('state') != session.get("state"):
-        app.logger.error("State mismatch in authorized route")
-        return redirect(url_for("index"))
-    if "error" in request.args:
-        app.logger.error(f"Auth error: {request.args.get('error')}, Description: {request.args.get('error_description')}")
-        return render_template("auth_error.html", result=request.args)
-    
-    cache = _load_cache()
-    redirect_uri = get_redirect_uri()
-    app.logger.debug(f"Attempting to acquire token with redirect_uri={redirect_uri}")
-    
     try:
-        result = _build_msal_app(cache=cache).acquire_token_by_authorization_code(
-            request.args['code'], scopes=SCOPE, redirect_uri=redirect_uri)
+        cache = _build_msal_app()
+        result = cache.acquire_token_by_authorization_code(
+            request.args['code'],
+            scopes=SCOPE,
+            redirect_uri=get_redirect_uri())
         if "error" in result:
-            app.logger.error(f"Token acquisition error: {result.get('error')}, Description: {result.get('error_description')}")
-            return render_template("auth_error.html", result=result)
+            return render_template("error.html", result=result)
         session["user"] = result.get("id_token_claims")
-        _save_cache(cache)
-        app.logger.debug("Token acquired successfully")
-    except Exception as e:
-        app.logger.exception("Exception during token acquisition")
-        return render_template("auth_error.html", result={"error": str(e)})
-
-    return redirect(url_for("index"))
+        return redirect(url_for("index"))
+    except ValueError:
+        return redirect(url_for("index"))
 
 @app.route("/logout")
 def logout():

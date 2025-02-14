@@ -68,6 +68,7 @@ def authorized():
             request.args['code'],
             scopes=SCOPE,
             redirect_uri=url_for("authorized", _external=True))
+        print(url_for("authorized", _external=True))
         if "error" in result:
             return render_template("error.html", result=result)
         session["user"] = result.get("id_token_claims")

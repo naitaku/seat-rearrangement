@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>エラー - 席替えアプリ</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-4">
+        <div class="alert alert-danger">
+            <h4 class="alert-heading">認証エラー</h4>
+            <p>認証中にエラーが発生しました。</p>
+            {% if result %}
+                <hr>
+                <p class="mb-0">エラー詳細: {{ result.error_description }}</p>
+            {% endif %}
+        </div>
+        <a href="{{ url_for('index') }}" class="btn btn-primary">ホームに戻る</a>
+    </div>
+</body>
+</html>

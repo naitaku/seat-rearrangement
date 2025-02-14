@@ -1,10 +1,29 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 import os
+from dotenv import load_dotenv
+import msal
+from flask_session import Session
+import requests
+
+# Load environment variables
+load_dotenv(".env.example")
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///seats.db'
+app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY')
+app.config['SESSION_TYPE'] = 'filesystem'
+Session(app)
+
+# MS Auth configs
+CLIENT_ID = os.getenv('CLIENT_ID')
+CLIENT_SECRET = os.getenv('CLIENT_SECRET')
+AUTHORITY = os.getenv('AUTHORITY')
+REDIRECT_PATH = "/auth/redirect"
+SCOPE = ["User.Read"]
+SESSION_TYPE = "filesystem"
+
 db = SQLAlchemy(app)
 
 class Member(db.Model):
@@ -25,11 +44,58 @@ class SeatAssignment(db.Model):
 with app.app_context():
     db.create_all()
 
+def _build_msal_app(cache=None):
+    return msal.ConfidentialClientApplication(
+        CLIENT_ID, authority=AUTHORITY,
+        client_credential=CLIENT_SECRET, token_cache=cache)
+
+def _build_auth_url(authority=None, scopes=None, state=None):
+    return _build_msal_app().get_authorization_request_url(
+        scopes or SCOPE,
+        state=state or str(datetime.utcnow()),
+        redirect_uri=url_for("authorized", _external=True))
+
+@app.route("/login")
+def login():
+    session["flow"] = _build_auth_url()
+    return redirect(session["flow"])
+
+@app.route(REDIRECT_PATH)
+def authorized():
+    try:
+        cache = _build_msal_app()
+        result = cache.acquire_token_by_authorization_code(
+            request.args['code'],
+            scopes=SCOPE,
+            redirect_uri=url_for("authorized", _external=True))
+        if "error" in result:
+            return render_template("error.html", result=result)
+        session["user"] = result.get("id_token_claims")
+        return redirect(url_for("index"))
+    except ValueError:
+        return redirect(url_for("index"))
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("index"))
+
+def login_required(f):
+    def decorated_function(*args, **kwargs):
+        if not session.get("user"):
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+    decorated_function.__name__ = f.__name__
+    return decorated_function
+
 @app.route('/')
 def index():
-    return render_template('index.html')
+    if not session.get("user"):
+        return render_template('index.html', authenticated=False)
+    return render_template('index.html', authenticated=True, user=session["user"])
 
 @app.route('/api/members', methods=['GET', 'POST'])
+@login_required
 def members():
     if request.method == 'POST':
         data = request.json
@@ -42,6 +108,7 @@ def members():
     return jsonify([{'id': m.id, 'name': m.name} for m in members])
 
 @app.route('/api/members/<int:member_id>', methods=['DELETE'])
+@login_required
 def delete_member(member_id):
     member = Member.query.get_or_404(member_id)
     # まず、このメンバーに関連する座席の割り当てを削除
@@ -52,6 +119,7 @@ def delete_member(member_id):
     return jsonify({'message': 'Member deleted successfully'})
 
 @app.route('/api/layouts', methods=['GET', 'POST'])
+@login_required
 def layouts():
     if request.method == 'POST':
         data = request.json
@@ -74,6 +142,7 @@ def layouts():
     return jsonify([{'id': l.id, 'name': l.name} for l in layouts])
 
 @app.route('/api/layouts/<int:layout_id>', methods=['GET', 'PUT', 'DELETE'])
+@login_required
 def manage_layout(layout_id):
     layout = SeatLayout.query.get_or_404(layout_id)
     
@@ -197,6 +266,7 @@ def calculate_optimal_moves(current_layout, target_layout):
     return moves
 
 @app.route('/api/calculate-moves', methods=['POST'])
+@login_required
 def calculate_moves():
     data = request.json
     current_layout = {a.seat_number: a.member_id 

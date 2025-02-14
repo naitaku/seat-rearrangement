@@ -24,6 +24,12 @@ REDIRECT_PATH = "/auth/redirect"
 SCOPE = ["User.Read"]
 SESSION_TYPE = "filesystem"
 
+# Get the application URL based on environment
+def get_redirect_uri():
+    if 'WEBSITE_HOSTNAME' in os.environ:  # Running on Azure
+        return f"https://app-seat-rearrangement-0001.azurewebsites.net{REDIRECT_PATH}"
+    return f"http://localhost:5001{REDIRECT_PATH}"
+
 db = SQLAlchemy(app)
 
 class Member(db.Model):
@@ -53,7 +59,7 @@ def _build_auth_url(authority=None, scopes=None, state=None):
     return _build_msal_app().get_authorization_request_url(
         scopes or SCOPE,
         state=state or str(datetime.utcnow()),
-        redirect_uri=url_for("authorized", _external=True))
+        redirect_uri=get_redirect_uri())
 
 @app.route("/login")
 def login():
@@ -67,8 +73,7 @@ def authorized():
         result = cache.acquire_token_by_authorization_code(
             request.args['code'],
             scopes=SCOPE,
-            redirect_uri=url_for("authorized", _external=True))
-        print(url_for("authorized", _external=True))
+            redirect_uri=get_redirect_uri())
         if "error" in result:
             return render_template("error.html", result=result)
         session["user"] = result.get("id_token_claims")
